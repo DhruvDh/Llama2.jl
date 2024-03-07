@@ -4,9 +4,12 @@ authors = ["Lukas Mayrhofer <lukas.mayrhofer@tum.de>"]
 version = "0.1.0"
 
 [deps]
+Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
+PProf = "e4faabce-9ead-11e9-39d9-4379958e3056"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"

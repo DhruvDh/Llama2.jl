@@ -9,22 +9,22 @@ read_karpathy_config(f::IOStream) = ModelConfig(
 )
 
 TransformerLayerWeights(p::ModelConfig) = TransformerLayerWeights(;
-    rms_att_weight = zeros(Float32, p.dim),
-    rms_ffn_weight = zeros(Float32, p.dim),
-    wq             = zeros(Float32, p.dim, p.dim),
-    wk             = zeros(Float32, p.dim, p.dim),
-    wv             = zeros(Float32, p.dim, p.dim),
-    wo             = zeros(Float32, p.dim, p.dim),
-    w1             = zeros(Float32, p.dim, p.hidden_dim),
-    w2             = zeros(Float32, p.hidden_dim, p.dim),
-    w3             = zeros(Float32, p.dim, p.hidden_dim),
+    rms_att_weight=KernelAbstractions.zeros(backend, Float32, p.dim),
+    rms_ffn_weight=KernelAbstractions.zeros(backend, Float32, p.dim),
+    wq=KernelAbstractions.zeros(backend, Float32, p.dim, p.dim),
+    wk=KernelAbstractions.zeros(backend, Float32, p.dim, p.dim),
+    wv=KernelAbstractions.zeros(backend, Float32, p.dim, p.dim),
+    wo=KernelAbstractions.zeros(backend, Float32, p.dim, p.dim),
+    w1=KernelAbstractions.zeros(backend, Float32, p.dim, p.hidden_dim),
+    w2=KernelAbstractions.zeros(backend, Float32, p.hidden_dim, p.dim),
+    w3=KernelAbstractions.zeros(backend, Float32, p.dim, p.hidden_dim),
 )
 
 TransformerWeights(p::ModelConfig) = TransformerWeights(;
-    token_embedding_table = zeros(Float32, p.dim, p.vocab_size),
-    layers                = [TransformerLayerWeights(p) for _ in 1:p.n_layers],
-    rms_final_weight      = zeros(Float32, p.dim),
-    output_weight         = zeros(Float32, p.dim, p.vocab_size),
+    token_embedding_table=KernelAbstractions.zeros(backend, Float32, p.dim, p.vocab_size),
+    layers=[TransformerLayerWeights(p) for _ in 1:p.n_layers],
+    rms_final_weight=KernelAbstractions.zeros(backend, Float32, p.dim),
+    output_weight=KernelAbstractions.zeros(backend, Float32, p.dim, p.vocab_size),
 )
 
 function read_karpathy_weights(f::IOStream, config::ModelConfig)
@@ -76,9 +76,9 @@ function load_karpathy_tokenizer(filename::AbstractString, vocab_size::Int)
 end
 
 function load_karpathy_model(
-        checkpoint_filename::AbstractString,
-        tokenizer_filename::AbstractString,
-    )
+    checkpoint_filename::AbstractString,
+    tokenizer_filename::AbstractString,
+)
 
     config = nothing
     weights = nothing

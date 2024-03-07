@@ -8,10 +8,14 @@ using SIMD
 using LoopVectorization
 using Random
 using Distributions
+using KernelAbstractions
+using Atomix
 
 export ModelConfig, CharTokenizer, LanguageModel
 export load_gguf_model, load_karpathy_model, encode, sample
 export train
+
+const global backend = CPU()
 
 # quantization
 include("quantization/utils.jl")

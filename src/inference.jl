@@ -61,8 +61,8 @@ struct KVCache
 end
 
 KVCache(head_size::Int, n_heads::Int, seq_len::Int) = KVCache(
-    zeros(Float32, head_size, n_heads, seq_len),
-    zeros(Float32, seq_len, head_size, n_heads),
+    KernelAbstractions.zeros(backend, Float32, head_size, n_heads, seq_len),
+    KernelAbstractions.zeros(backend, Float32, seq_len, head_size, n_heads),
 )
 
 @kwdef struct RunState
@@ -82,26 +82,55 @@ KVCache(head_size::Int, n_heads::Int, seq_len::Int) = KVCache(
 end
 
 RunState(c::ModelConfig) = RunState(;
-    x              = zeros(Float32, c.dim),
-    xb             = zeros(Float32, c.dim),
-    xb2            = zeros(Float32, c.dim),
-    hb             = zeros(Float32, c.hidden_dim),
-    hb2            = zeros(Float32, c.hidden_dim),
-    q              = zeros(Float32, c.dim),
-    k              = zeros(Float32, c.dim),
-    v              = zeros(Float32, c.dim),
-    att            = zeros(Float32, c.seq_len * c.n_heads),
-    logits         = zeros(Float32, c.vocab_size),
-    kvcache_layers = [KVCache(c.dim ÷ c.n_heads, c.n_heads, c.seq_len) for _ in 1:c.n_layers],
+    x=KernelAbstractions.zeros(backend, Float32, c.dim),
+    xb=KernelAbstractions.zeros(backend, Float32, c.dim),
+    xb2=KernelAbstractions.zeros(backend, Float32, c.dim),
+    hb=KernelAbstractions.zeros(backend, Float32, c.hidden_dim),
+    hb2=KernelAbstractions.zeros(backend, Float32, c.hidden_dim),
+    q=KernelAbstractions.zeros(backend, Float32, c.dim),
+    k=KernelAbstractions.zeros(backend, Float32, c.dim),
+    v=KernelAbstractions.zeros(backend, Float32, c.dim),
+    att=KernelAbstractions.zeros(backend, Float32, c.seq_len * c.n_heads),
+    logits=KernelAbstractions.zeros(backend, Float32, c.vocab_size),
+    kvcache_layers=[KVCache(c.dim ÷ c.n_heads, c.n_heads, c.seq_len) for _ in 1:c.n_layers],
 )
 
+@kernel function self_dot_kernel!(result, x)
+    li = @index(Local, Linear)
+    I = @index(Global, Linear)
+
+    TILE_DIM = @uniform @groupsize()[1]
+
+    intermediate_result_tile = @localmem eltype(result) (TILE_DIM)
+    intermediate_result_tile[li] = x[I] * x[I]
+
+    @synchronize()
+    KernelAbstractions.Extras.@unroll for i in [1, 2, 4, 8, 16, 32]
+        if (li + i) <= TILE_DIM
+            intermediate_result_tile[li] += intermediate_result_tile[li+i]
+        end
+        @synchronize()
+    end
+
+    if li == 1
+        Atomix.@atomic result[1] += intermediate_result_tile[1]
+    end
+end
+
+@kernel function rmsnorm_inner_kernel!(o, @Const(x), @Const(weight), @Const(ss))
+    I = @index(Global, Linear)
+    @inbounds o[I] = weight[I] * (ss * x[I])
+end
+
 function rmsnorm!(o, x, weight)
-    ss = dot(x, x)
-    ss /= length(x)
-    ss += 1f-6
-    ss = 1f0 / sqrt(ss)
+    dotresult = KernelAbstractions.zeros(backend, Float32, 1)
+    self_dot_kernel!(backend, 32, size(x))(dotresult, x, ndrange=size(x))
+    ss = dotresult[1] / length(x)
+    ss += 1.0f-6
+    ss = 1.0f0 / sqrt(ss)
     # normalize and scale
-    o .= weight .* (ss .* x)
+    rmsnorm_inner_kernel!(backend)(o, x, weight, ss, ndrange=size(weight))
+    # o .= weight .* (ss .* x)
     return nothing
 end
 
@@ -112,7 +141,7 @@ function rope!(x::AbstractMatrix{Float32}, pos::Int)
     freq_base = 10000.0f0
     freq_scale = 1.0f0
 
-    theta_scale = freq_base ^ (-inv(Float32(head_size_div2)))
+    theta_scale = freq_base^(-inv(Float32(head_size_div2)))
 
     @inbounds for head in 1:n_heads
         theta = freq_scale * (pos - 1)
@@ -136,7 +165,7 @@ end
 function attention_weights!(att, key_cache, q)
     @inbounds @fastmath for h in axes(att, 2)
         for t in axes(att, 1)
-            s = 0f0
+            s = 0.0f0
 
             for i in axes(q, 1)
                 s += q[i, h] * key_cache[i, h, t]
@@ -152,7 +181,7 @@ end
 function combine_values!(xb, value_cache, att)
     @inbounds @fastmath for h in axes(xb, 2)
         for i in axes(xb, 1)
-            s = 0f0
+            s = 0.0f0
 
             for t in axes(att, 1)
                 s += att[t, h] * value_cache[t, i, h]
@@ -238,7 +267,7 @@ end
 
         # F.silu silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
         for i in 1:hidden_dim
-            s.hb[i] = s.hb[i] * (1f0 / (1f0 + exp(-s.hb[i])))
+            s.hb[i] = s.hb[i] * (1.0f0 / (1.0f0 + exp(-s.hb[i])))
         end
 
         s.hb .*= s.hb2
@@ -260,13 +289,13 @@ end
 end
 
 function sample(
-        model::LanguageModel,
-        prompt::String = "";
-        temperature::Float32 = 0.9f0,
-        stop_on_special_token = true,
-        max_seq_len = typemax(Int),
-        bos_token = true,
-    )
+    model::LanguageModel,
+    prompt::String="";
+    temperature::Float32=0.9f0,
+    stop_on_special_token=true,
+    max_seq_len=typemax(Int),
+    bos_token=true,
+)
 
     if !bos_token && isempty(prompt)
         error("Prompt cannot be empty if bos_token = false")
@@ -299,11 +328,11 @@ function sample(
         transformer!(token, pos, config, state, weights)
         generated_seq_len += 1
 
-        if pos+1 <= length(prompt_tokens)
+        if pos + 1 <= length(prompt_tokens)
             next = prompt_tokens[pos+1]
         else
             # sample the next token
-            if temperature == 0f0
+            if temperature == 0.0f0
                 # greedy argmax sampling
                 next = argmax(state.logits)
             else
